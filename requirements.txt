@@ -4,3 +4,4 @@ supabase
 yfinance
 python-dotenv
 plotly
+google-generativeai

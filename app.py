@@ -4,12 +4,17 @@ import plotly.express as px
 import streamlit as st
 from supabase import create_client
 from dotenv import load_dotenv
+import google.generativeai as genai
 
 load_dotenv()
 
 SUPABASE_URL = st.secrets.get("SUPABASE_URL", os.environ.get("SUPABASE_URL"))
 SUPABASE_KEY = st.secrets.get("SUPABASE_KEY", os.environ.get("SUPABASE_KEY"))
+GEMINI_KEY   = st.secrets.get("GEMINI_API_KEY", os.environ.get("GEMINI_API_KEY"))
+
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+genai.configure(api_key=GEMINI_KEY)
+model = genai.GenerativeModel("gemini-1.5-flash")
 
 st.set_page_config(
     page_title="Fund Operations Dashboard",
@@ -23,17 +28,17 @@ def load(table):
     return pd.DataFrame(supabase.table(table).select("*").execute().data)
 
 
-funds  = load("funds")
-inst   = load("instruments")
-cps    = load("counterparties")
-ssi    = load("settlement_instructions")
-pos    = load("positions")
-trades = load("trades")
-breaks = load("reconciliation_breaks")
+funds    = load("funds")
+inst     = load("instruments")
+cps      = load("counterparties")
+ssi      = load("settlement_instructions")
+pos      = load("positions")
+trades   = load("trades")
+breaks   = load("reconciliation_breaks")
 nav_hist = load("nav_history")
 
 st.title("Fund Operations Dashboard")
-st.caption("Static data  |  Reconciliation  |  Trade monitoring  |  Fund overview")
+st.caption("Static data  |  Reconciliation  |  Trade monitoring  |  Fund overview  |  AI Assistant")
 
 st.markdown("""
 This dashboard simulates the daily monitoring workflow of a middle office team at an institutional
@@ -48,13 +53,14 @@ A missing or expired SSI means a trade cannot settle and penalties apply under E
 tracked from Open through Investigating to Resolved.  
 **Trade Monitor** — Last 10 days of trades. Flags overdue settlements and trades with no valid SSI on file.  
 **Fund Overview** — AUM, NAV per share, 30-day trend, and asset class breakdown per fund,
-with open break exposure as an operational risk indicator.
+with open break exposure as an operational risk indicator.  
+**AI Assistant** — Ask any question about the current state of the data in plain English.
 
 *Instrument prices updated daily via GitHub Actions. NAV history refreshed each weekday after European market close.*
 """)
 
-tab1, tab2, tab3, tab4 = st.tabs([
-    "Static Data", "Reconciliation Breaks", "Trade Monitor", "Fund Overview"
+tab1, tab2, tab3, tab4, tab5 = st.tabs([
+    "Static Data", "Reconciliation Breaks", "Trade Monitor", "Fund Overview", "AI Assistant"
 ])
 
 
@@ -175,7 +181,7 @@ with tab2:
 
 # ── TAB 3 — TRADE MONITOR ────────────────────────────────────────────
 with tab3:
-    st.caption("Rolling 10-day trade history. A trade flagged red has missed its settlement date. A trade flagged yellow has no active SSI — it will fail on settlement date unless the instruction is set up before the custodian cut-off.")
+    st.caption("Rolling 10-day trade history. A trade flagged red has missed its settlement date. A trade flagged yellow has no active SSI and will fail on settlement date unless the instruction is set up before the custodian cut-off.")
 
     d = (trades
          .merge(funds[["fund_id","name"]], on="fund_id", how="left")
@@ -274,3 +280,89 @@ with tab4:
                 col_chart.bar_chart(ac.set_index("Asset Class"))
                 col_pos.caption("Breakdown (EUR)")
                 col_pos.dataframe(ac, use_container_width=True)
+
+
+# ── TAB 5 — AI ASSISTANT ─────────────────────────────────────────────
+with tab5:
+    st.caption("Ask any question about the current state of the dashboard data in plain English.")
+
+    def build_context():
+        open_breaks = breaks[breaks["status"] == "Open"]
+        pending_trades = trades[trades["status"] == "Pending"]
+        expired_ssi = ssi[ssi["status"] == "Expired"]
+        overdue_trades = trades[
+            (pd.to_datetime(trades["settlement_date"]).dt.date < pd.Timestamp.today().date()) &
+            (trades["status"].isin(["Pending","Failed"]))
+        ]
+
+        ctx = f"""
+You are an investment operations analyst assistant. You have access to the following live data
+from a fund operations dashboard. Answer questions concisely and accurately based only on this data.
+
+FUNDS ({len(funds)} total):
+{funds[["fund_id","name","fund_type","base_currency","aum_eur","nav_per_share"]].to_string(index=False)}
+
+INSTRUMENTS ({len(inst)} total):
+{inst[["isin","name","asset_class","currency","price","price_date"]].to_string(index=False)}
+
+COUNTERPARTIES ({len(cps)} total):
+{cps[["counterparty_id","name","cp_type","kyc_status"]].to_string(index=False)}
+
+SETTLEMENT INSTRUCTIONS:
+- Total: {len(ssi)}
+- Active: {(ssi["status"]=="Active").sum()}
+- Expired: {(ssi["status"]=="Expired").sum()}
+- Pending: {(ssi["status"]=="Pending").sum()}
+
+RECONCILIATION BREAKS:
+- Open: {(breaks["status"]=="Open").sum()} — Total exposure EUR: {breaks[breaks["status"]=="Open"]["break_value_eur"].sum():,.0f}
+- Investigating: {(breaks["status"]=="Investigating").sum()}
+- Resolved: {(breaks["status"]=="Resolved").sum()}
+- Break types: {breaks["break_type"].value_counts().to_dict()}
+
+BREAKS BY FUND:
+{breaks.groupby("fund_id")["break_id"].count().reset_index().rename(columns={"break_id":"break_count"}).to_string(index=False)}
+
+TRADES (last 10 days):
+- Total: {len(trades)}
+- Pending: {(trades["status"]=="Pending").sum()}
+- Settled: {(trades["status"]=="Settled").sum()}
+- Failed: {(trades["status"]=="Failed").sum()}
+- Overdue: {len(overdue_trades)}
+
+EXPIRED SSIs:
+{expired_ssi[["ssi_id","counterparty_id","isin","valid_to"]].to_string(index=False) if len(expired_ssi) else "None"}
+"""
+        return ctx
+
+    question = st.text_input("Ask a question about the data:", placeholder="e.g. Which fund has the most open reconciliation breaks?")
+
+    if question:
+        with st.spinner("Analysing..."):
+            context = build_context()
+            prompt = f"{context}\n\nQuestion: {question}\n\nAnswer:"
+            try:
+                response = model.generate_content(prompt)
+                st.markdown(response.text)
+            except Exception as e:
+                st.error(f"Error: {e}")
+
+    st.markdown("**Example questions:**")
+    examples = [
+        "Which fund has the most open reconciliation breaks?",
+        "Are there any counterparties with expired KYC?",
+        "How many trades are overdue today?",
+        "Which SSIs are expired and for which counterparties?",
+        "What is the total EUR exposure from open breaks by asset class?",
+        "Which fund has the highest AUM?",
+    ]
+    for ex in examples:
+        if st.button(ex):
+            with st.spinner("Analysing..."):
+                context = build_context()
+                prompt = f"{context}\n\nQuestion: {ex}\n\nAnswer:"
+                try:
+                    response = model.generate_content(prompt)
+                    st.markdown(response.text)
+                except Exception as e:
+                    st.error(f"Error: {e}")
