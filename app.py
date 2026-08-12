@@ -430,7 +430,7 @@ with tab3:
 """)
 
     if polymarket_df.empty:
-        st.warning("No Polymarket data yet. Run update_prices_v2.py to populate.")
+        st.warning("No Polymarket data yet. Trigger the daily price refresh workflow on GitHub Actions.")
     else:
         poly_cats = ["All"] + sorted(polymarket_df["category"].unique().tolist())
         cat_filter = st.selectbox("Filter by category", poly_cats)
