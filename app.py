@@ -141,7 +141,7 @@ with tab1:
     if assets_df.empty:
         st.warning("No asset data yet. Run seed_assets.py first.")
         st.stop()
-        
+
     col_theme, col_asset = st.columns([1, 2])
     selected_theme = col_theme.selectbox("Theme", THEMES)
     theme_assets   = assets_df[assets_df["theme"] == selected_theme]
@@ -345,7 +345,7 @@ with tab2:
     CATEGORIES = ["War & Conflict", "Energy Disruption", "Trade & Sanctions", "Monetary Policy", "Tech Regulation"]
 
     if risk_scores_df.empty:
-        st.warning("No risk score data yet. Run update_prices_v2.py to populate.")
+        st.warning("No risk score data yet. Run the daily price refresh workflow on GitHub Actions.")
     else:
         risk_scores_df["score_date"] = pd.to_datetime(risk_scores_df["score_date"])
         pivot_risk = risk_scores_df.pivot(index="score_date", columns="category", values="risk_score").sort_index()
