@@ -138,6 +138,10 @@ tab1, tab2, tab3, tab4, tab5 = st.tabs([
 with tab1:
     st.caption("Statistical and quantitative analysis of pre-selected thematic asset portfolios. Select a theme and an asset to view the full analytical breakdown.")
 
+    if assets_df.empty:
+        st.warning("No asset data yet. Run seed_assets.py first.")
+        st.stop()
+        
     col_theme, col_asset = st.columns([1, 2])
     selected_theme = col_theme.selectbox("Theme", THEMES)
     theme_assets   = assets_df[assets_df["theme"] == selected_theme]
