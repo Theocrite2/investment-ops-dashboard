@@ -164,9 +164,10 @@ def update_polymarket():
 
         markets = r.json()
         relevant_keywords = [
-            "war", "conflict", "fed", "rate", "bitcoin", "btc", "recession",
-            "election", "oil", "china", "russia", "ukraine", "ai", "nvidia",
-            "inflation", "ceasefire", "sanctions", "iran", "israel"
+            "fed rate", "federal reserve", "bitcoin", "btc", "ethereum",
+            "recession", "inflation", "war", "russia", "ukraine", "china",
+            "iran", "israel", "oil price", "nvidia", "s&p", "election",
+            "ceasefire", "sanctions", "trump", "powell"
         ]
 
         saved = 0
@@ -200,7 +201,7 @@ def update_polymarket():
                 "title":        m.get("question", m.get("title", ""))[:300],
                 "category":     category,
                 "current_prob": round(prob, 4),
-                "url":          f"https://polymarket.com/event/{m.get('slug','')}",
+                "url": f"https://polymarket.com/event/{m.get('slug', m.get('conditionId',''))}",
                 "last_updated": str(TODAY),
             }).execute()
             saved += 1
