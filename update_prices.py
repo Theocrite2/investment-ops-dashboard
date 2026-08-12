@@ -99,6 +99,7 @@ def get_finbert_score(text):
 
 
 def fetch_headlines(keywords, max_results=10):
+    print(f"  Fetching headlines, GNEWS_KEY present: {bool(GNEWS_KEY)}")
     if not GNEWS_KEY:
         return []
     query = " OR ".join(f'"{kw}"' for kw in keywords[:2])
