@@ -2,7 +2,7 @@ name: Daily Price Refresh
 
 on:
   schedule:
-    - cron: "0 17 * * 1-5" # 18:00 CET weekdays
+    - cron: "0 17 * * 1-5"
   workflow_dispatch:
 
 jobs:
@@ -10,11 +10,8 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
 
@@ -22,10 +19,11 @@ jobs:
         run: |
           python -m venv .venv
           .venv/bin/pip install --upgrade pip
-          .venv/bin/pip install supabase "yfinance==1.4.0" "websockets>=13.0" python-dotenv pandas plotly
+          .venv/bin/pip install supabase "yfinance==1.4.0" "websockets>=13.0" python-dotenv pandas plotly google-generativeai newsapi-python requests
 
       - name: Run price refresh
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          GNEWS_KEY: ${{ secrets.GNEWS_KEY }}
         run: .venv/bin/python update_prices.py
