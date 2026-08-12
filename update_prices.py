@@ -26,7 +26,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 supabase     = create_client(os.environ["SUPABASE_URL"], os.environ["SUPABASE_KEY"])
-NEWSAPI_KEY  = os.environ.get("NEWSAPI_KEY", "")
+GNEWS_KEY = os.environ.get("GNEWS_KEY", "")
 TODAY        = date.today()
 
 # ── 1. ASSET PRICES ──────────────────────────────────────────────────────────
@@ -98,19 +98,21 @@ def get_finbert_score(text):
     return 0.5  # neutral fallback
 
 
-def fetch_headlines(keywords, page_size=10):
-    if not NEWSAPI_KEY:
+def fetch_headlines(keywords, max_results=10):
+    if not GNEWS_KEY:
         return []
-    query = " OR ".join(f'"{kw}"' for kw in keywords[:3])
+    query = " OR ".join(f'"{kw}"' for kw in keywords[:2])
     try:
         r = requests.get(
-            "https://newsapi.org/v2/everything",
-            params={"q": query, "language": "en", "sortBy": "publishedAt",
-                    "pageSize": page_size, "apiKey": NEWSAPI_KEY},
+            "https://gnews.io/api/v4/search",
+            params={"q": query, "lang": "en", "max": max_results,
+                    "sortby": "publishedAt", "token": GNEWS_KEY},
             timeout=10
         )
         if r.status_code == 200:
-            return r.json().get("articles", [])
+            return [{"title": a.get("title",""), "description": a.get("description",""),
+                     "source": {"name": a.get("source",{}).get("name","")}}
+                    for a in r.json().get("articles", [])]
     except Exception:
         pass
     return []
