@@ -43,7 +43,7 @@ def load_prices_for_ticker(ticker):
         df = df.sort_values("price_date").reset_index(drop=True)
     return df
 
-@st.cache_data(ttl=1800)
+@st.cache_data(ttl=60)
 def load_prices_for_theme(theme, assets_df):
     tickers = assets_df[assets_df["theme"] == theme]["ticker"].tolist()
     if not tickers:
