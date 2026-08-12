@@ -81,21 +81,14 @@ RISK_CATEGORIES = {
     "Tech Regulation":     ["AI regulation", "antitrust tech", "semiconductor ban", "chip export", "big tech fine"],
 }
 
-FINBERT_URL = "https://api-inference.huggingface.co/models/ProsusAI/finbert"
-
+from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
+_vader = SentimentIntensityAnalyzer()
 
 def get_finbert_score(text):
-    """Returns risk score 0-1 (higher = more negative/risky sentiment)."""
-    try:
-        r = requests.post(FINBERT_URL, json={"inputs": text[:512]}, timeout=15)
-        if r.status_code == 200:
-            result = r.json()
-            if isinstance(result, list) and result:
-                scores = {item["label"]: item["score"] for item in result[0]}
-                return round(scores.get("negative", 0.5), 4)
-    except Exception:
-        pass
-    return 0.5  # neutral fallback
+    scores = _vader.polarity_scores(text)
+    # Convert compound score (-1 to 1) to risk score (0 to 1)
+    # Negative compound = high risk
+    return round((1 - scores["compound"]) / 2, 4)
 
 
 def fetch_headlines(keywords, max_results=10):
@@ -167,10 +160,10 @@ def update_polymarket():
 
         markets = r.json()
         relevant_keywords = [
-            "fed rate", "federal reserve", "bitcoin", "btc", "ethereum",
-            "recession", "inflation", "war", "russia", "ukraine", "china",
-            "iran", "israel", "oil price", "nvidia", "s&p", "election",
-            "ceasefire", "sanctions", "trump", "powell"
+            "federal reserve", "interest rate", "bitcoin", "recession",
+            "inflation", "russia ukraine", "iran israel", "oil price",
+            "nvidia earnings", "trump tariffs", "china trade",
+            "ceasefire", "nato", "fed rate cut", "s&p 500"
         ]
 
         saved = 0
@@ -204,11 +197,14 @@ def update_polymarket():
                 "title":        m.get("question", m.get("title", ""))[:300],
                 "category":     category,
                 "current_prob": round(prob, 4),
-                "url": f"https://polymarket.com/event/{m.get('slug', m.get('conditionId',''))}",
+                "url": f"https://polymarket.com/event/{m.get('slug') or m.get('groupItemTitle','').lower().replace(' ','-')}",
                 "last_updated": str(TODAY),
             }).execute()
+            volume = float(m.get("volume", 0) or 0)
+            if volume < 10000:
+                continue
             saved += 1
-            if saved >= 20:
+            if saved >= 15:
                 break
 
         print(f"  {saved} Polymarket markets updated.")
