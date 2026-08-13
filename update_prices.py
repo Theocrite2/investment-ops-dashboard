@@ -90,7 +90,7 @@ def get_finbert_score(text):
         return round((1 - score) / 2, 4)
     except Exception:
         return 0.5
-
+    
 def fetch_headlines(keywords, max_results=10):
     print(f"  Fetching headlines, GNEWS_KEY present: {bool(GNEWS_KEY)}")
     if not GNEWS_KEY:
