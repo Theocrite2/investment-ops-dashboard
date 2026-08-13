@@ -200,7 +200,7 @@ def update_polymarket():
                 "title":        m.get("question", m.get("title", ""))[:300],
                 "category":     category,
                 "current_prob": round(prob, 4),
-                "url": f"https://polymarket.com/event/{m.get('slug') or m.get('groupItemTitle','').lower().replace(' ','-')}",
+                "url": f"https://polymarket.com/event/{m.get('groupSlug') or m.get('slug','')}",
                 "last_updated": str(TODAY),
             }).execute()
             volume = float(m.get("volume", 0) or 0)
