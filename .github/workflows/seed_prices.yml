@@ -15,7 +15,7 @@ jobs:
         run: |
           python -m venv .venv
           .venv/bin/pip install --upgrade pip --no-cache-dir
-          .venv/bin/pip install --no-cache-dir supabase "yfinance==1.4.0" "websockets>=13.0" python-dotenv pandas requests vaderSentiment
+          .venv/bin/pip install --no-cache-dir supabase "yfinance==1.4.0" "websockets>=13.0" python-dotenv pandas requests textblob
       - name: Run
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}

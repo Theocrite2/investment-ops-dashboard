@@ -84,10 +84,12 @@ RISK_CATEGORIES = {
 
 
 def get_finbert_score(text):
-    from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
-    vader = SentimentIntensityAnalyzer()
-    scores = vader.polarity_scores(text)
-
+    try:
+        from textblob import TextBlob
+        score = TextBlob(text).sentiment.polarity
+        return round((1 - score) / 2, 4)
+    except Exception:
+        return 0.5
 
 def fetch_headlines(keywords, max_results=10):
     print(f"  Fetching headlines, GNEWS_KEY present: {bool(GNEWS_KEY)}")
