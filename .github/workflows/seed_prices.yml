@@ -20,4 +20,6 @@ jobs:
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
-        run: .venv/bin/python fix_prices.py
+          GNEWS_KEY: ${{ secrets.GNEWS_KEY }}
+        run: .venv/bin/python update_prices.py --backfill-risk
+        

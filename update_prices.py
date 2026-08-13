@@ -264,13 +264,44 @@ def update_fund_instrument_prices():
             print(f"  Failed {ticker}: {e}")
     print(f"  {updated} fund instrument prices updated.")
 
+def backfill_risk_scores(days=30):
+    print(f"Backfilling {days} days of risk scores...")
+    from datetime import timedelta
+    for i in range(days, 0, -1):
+        d = TODAY - timedelta(days=i)
+        if d.weekday() >= 5:
+            continue
+        for category, keywords in RISK_CATEGORIES.items():
+            articles = fetch_headlines(keywords)
+            if not articles:
+                continue
+            scores = []
+            for article in articles:
+                text = f"{article.get('title','')} {article.get('description','')}"
+                score = get_finbert_score(text)
+                scores.append(score)
+            avg_score = round(sum(scores) / len(scores), 4) if scores else 0.5
+            supabase.table("risk_scores").upsert({
+                "score_date":     str(d),
+                "category":       category,
+                "risk_score":     avg_score,
+                "headline_count": len(scores),
+            }, on_conflict="score_date,category").execute()
+        print(f"  {d} done")
+    print("Backfill complete.")
+
 
 # ── MAIN ────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    update_asset_prices()
-    update_risk_scores()
-    update_polymarket()
-    append_nav_today()
-    update_fund_instrument_prices()
+    if "--backfill" in sys.argv:
+        backfill_nav(30)
+    elif "--backfill-risk" in sys.argv:
+        backfill_risk_scores(30)
+    else:
+        update_asset_prices()
+        update_risk_scores()
+        update_polymarket()
+        append_nav_today()
+        update_fund_instrument_prices()
     print("Done.")
