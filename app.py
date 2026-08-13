@@ -443,7 +443,7 @@ with tab3:
             col1.markdown(f"**{row['title']}**")
             col1.caption(f"Category: {row['category']}")
             col2.metric("Probability", f"{prob:.0%}")
-            if row.get("url"):
+            if row.get("url") and row["url"] != "https://polymarket.com/event/":
                 col3.markdown(f"[View on Polymarket]({row['url']})")
             st.progress(prob)
             st.divider()
