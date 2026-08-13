@@ -81,14 +81,12 @@ RISK_CATEGORIES = {
     "Tech Regulation":     ["AI regulation", "antitrust tech", "semiconductor ban", "chip export", "big tech fine"],
 }
 
-from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
-_vader = SentimentIntensityAnalyzer()
+
 
 def get_finbert_score(text):
-    scores = _vader.polarity_scores(text)
-    # Convert compound score (-1 to 1) to risk score (0 to 1)
-    # Negative compound = high risk
-    return round((1 - scores["compound"]) / 2, 4)
+    from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
+    vader = SentimentIntensityAnalyzer()
+    scores = vader.polarity_scores(text)
 
 
 def fetch_headlines(keywords, max_results=10):
