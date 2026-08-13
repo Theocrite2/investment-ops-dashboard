@@ -170,7 +170,7 @@ def update_polymarket():
         for m in markets:
             title = m.get("question", m.get("title", "")).lower()
             # Skip sports markets
-            if any(w in title for w in ["psg","champions league","soccer","football match","nfl","nba","nhl","mlb","wins","goal","score"]):
+            if any(w in title for w in ["psg","paris saint-germain","champions league","soccer","football","nfl","nba","nhl","mlb","win on","goal","score","match","league","cup","tournament","player","team","sport"]):
                 continue
             if not any(kw in title for kw in relevant_keywords):
                 continue
