@@ -413,7 +413,7 @@ with tab2:
 # ══════════════════════════════════════════════════════════════════════════════
 
 with tab3:
-    st.caption("Live probabilities from Polymarket — a prediction market where participants stake real money on event outcomes. Market prices represent the crowd's probabilistic assessment of each event.")
+    st.markdown("🔗 [Browse all markets on Polymarket](https://polymarket.com)")
 
     with st.expander("What are prediction markets and why do they matter?"):
         st.markdown("""

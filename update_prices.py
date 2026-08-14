@@ -177,9 +177,16 @@ def update_polymarket():
                 continue
             try:
                 outcome_prices = m.get("outcomePrices", "[]")
+                outcomes = m.get("outcomes", "[]")
                 if isinstance(outcome_prices, str):
                     outcome_prices = json.loads(outcome_prices)
-                prob = float(outcome_prices[0]) if outcome_prices else 0.5
+                if isinstance(outcomes, str):
+                    outcomes = json.loads(outcomes)
+                if outcomes and outcome_prices:
+                    yes_idx = outcomes.index("Yes") if "Yes" in outcomes else 0
+                    prob = float(outcome_prices[yes_idx])
+                else:
+                    prob = 0.5
             except Exception:
                 prob = 0.5
 
