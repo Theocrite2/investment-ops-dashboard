@@ -509,14 +509,6 @@ with tab4:
         else:
             poly_summary = "No Polymarket data available"
 
-        # Fund ops summary
-        fund_summary = f"""
-Open reconciliation breaks: {len(open_breaks)} (Total EUR exposure: {open_breaks['break_value_eur'].sum():,.0f})
-Expired SSIs: {len(expired_ssi)}
-Overdue trades: {len(overdue_trades)}
-Funds: {', '.join(funds_df['name'].tolist())}
-"""
-
         return f"""
 You are a financial analyst assistant with access to the following live data.
 Answer questions concisely and accurately. Where relevant, reference specific numbers from the data.
@@ -533,8 +525,6 @@ GEOPOLITICAL RISK SCORES (0=low risk, 1=high risk, FinBERT NLP):
 PREDICTION MARKET PROBABILITIES (Polymarket):
 {poly_summary}
 
-FUND OPERATIONS:
-{fund_summary}
 """
 
     user_question = st.text_input(
