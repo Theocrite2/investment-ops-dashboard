@@ -169,8 +169,6 @@ def update_polymarket():
 
         saved = 0
         for m in markets:
-            print(f"  Market fields: {list(m.keys())}")
-            break
             title = m.get("question", m.get("title", "")).lower()
             # Skip sports markets
             if any(w in title for w in ["psg","paris saint-germain","champions league","soccer","football","nfl","nba","nhl","mlb","win on","goal","score","match","league","cup","tournament","player","team","sport"]):

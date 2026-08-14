@@ -19,7 +19,8 @@ jobs:
         run: |
           python -m venv .venv
           .venv/bin/pip install --upgrade pip
-          .venv/bin/pip install supabase "yfinance==1.4.0" "websockets>=13.0" python-dotenv pandas plotly google-generativeai requests vaderSentiment
+          .venv/bin/pip install --no-cache-dir supabase "yfinance==1.4.0" "websockets>=13.0" python-dotenv pandas plotly google-generativeai requests textblob
+          .venv/bin/python -c "import nltk; nltk.download('punkt'); nltk.download('averaged_perceptron_tagger')"
 
       - name: Run price refresh
         env:

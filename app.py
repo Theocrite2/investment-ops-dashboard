@@ -440,8 +440,7 @@ with tab3:
             col1.markdown(f"**{row['title']}**")
             col1.caption(f"Category: {row['category']}")
             col2.metric("Probability", f"{prob:.0%}")
-            if row.get("url"):
-                col3.markdown(f"[View on Polymarket]({row['url']})")
+            # Polymarket links removed - unreliable slugs from free API
             st.progress(prob)
             st.divider()
 
