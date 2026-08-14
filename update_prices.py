@@ -255,7 +255,11 @@ FUND_TICKERS = {
 def update_fund_instrument_prices():
     print("Updating fund instrument prices...")
     tickers = list(FUND_TICKERS.keys())
-    data = yf.download(tickers, period="5d", auto_adjust=True, progress=False)
+    try:
+        data = yf.download(tickers, period="5d", auto_adjust=True, progress=False)
+    except Exception as e:
+        print(f"  Batch download failed: {e}")
+        return
     updated = 0
     for ticker, isin in FUND_TICKERS.items():
         try:
