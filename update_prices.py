@@ -190,6 +190,9 @@ def update_polymarket():
             except Exception:
                 prob = 0.5
 
+            if prob > 0.97 or prob < 0.03:
+                continue
+
             category = "Macro"
             if any(w in title for w in ["war","conflict","ukraine","russia","iran","israel","ceasefire"]):
                 category = "War & Conflict"
