@@ -195,14 +195,20 @@ def update_polymarket():
                 category = "Politics"
 
             market_id = m.get("id", m.get("conditionId", str(saved)))
+            
+            slug = m.get("groupSlug") or m.get("slug")
+            market_url = None
+            if slug and isinstance(slug, str) and len(slug) > 3 and not slug.startswith("0x"):
+                market_url = f"https://polymarket.com/event/{slug}"
             supabase.table("polymarket_markets").upsert({
                 "market_id":    str(market_id),
                 "title":        m.get("question", m.get("title", ""))[:300],
                 "category":     category,
                 "current_prob": round(prob, 4),
-                "url": f"https://polymarket.com/event/{m.get('groupSlug') or m.get('slug','')}",
+                "url":          market_url,
                 "last_updated": str(TODAY),
             }).execute()
+
             volume = float(m.get("volume", 0) or 0)
             if volume < 10000:
                 continue
