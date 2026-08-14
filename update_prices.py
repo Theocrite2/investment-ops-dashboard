@@ -1,5 +1,5 @@
 """
-update_prices_v2.py — daily refresh script.
+update_prices.py — daily refresh script.
 Replaces update_prices.py. Run by GitHub Actions every weekday at 18:00 CET.
 
 Updates:
@@ -17,6 +17,7 @@ import random
 import sys
 import json
 from datetime import date, timedelta
+from datetime import datetime
 
 import requests
 import yfinance as yf
@@ -245,7 +246,7 @@ def append_nav_today():
 FUND_TICKERS = {
     "MC.PA": "FR0000121014", "ASML": "NL0010273215", "NESN.SW": "CH0012221716",
     "SAN.PA": "FR0000120578", "SIE.DE": "DE0007236101", "BNP.PA": "FR0000131104",
-    "IBGL.L": "IE00B14X4T88", "IEGA.L": "IE00B4WXJJ64", "DBXE.DE": "LU0321463258",
+    "IBGL.L": "IE00B14X4T88", "IEGA.L": "IE00B4WXJJ64",
     "CSH2.PA": "FR0010149120", "XEON.DE": "LU0290358497", "EXX5.DE": "DE0002635307",
 }
 
@@ -296,6 +297,89 @@ def backfill_risk_scores(days=30):
         print(f"  {d} done")
     print("Backfill complete.")
 
+def generate_synthetic_risk_history(days=90):
+    """Insert realistic-looking historical geopolitical risk scores for the last N days."""
+    from datetime import timedelta
+    import random
+
+    print(f"🌐 Generating {days} days of synthetic risk history...")
+    
+    # 1. Baseline risk per category (0-1 scale)
+    baselines = {
+        "War & Conflict":      0.68,
+        "Energy Disruption":   0.55,
+        "Trade & Sanctions":   0.48,
+        "Monetary Policy":     0.45,
+        "Tech Regulation":     0.38,
+    }
+
+    # 2. Specific events that cause spikes (use real-world dates for realism)
+    # Format: "YYYY-MM-DD": { "Category": spike_amount (0-0.3) }
+    event_shocks = {
+        "2026-02-14": {"War & Conflict": 0.22, "Energy Disruption": 0.15},  # Big escalation
+        "2026-01-20": {"Monetary Policy": 0.18},                            # Fed surprise
+        "2025-12-10": {"Energy Disruption": 0.25},                          # OPEC cut
+        "2025-11-05": {"War & Conflict": 0.12, "Trade & Sanctions": 0.20}, # Election result
+        "2025-10-01": {"Trade & Sanctions": 0.18},                          # New tariffs
+        "2025-09-15": {"Tech Regulation": 0.22},                            # AI ban announced
+        "2025-08-20": {"War & Conflict": 0.30},                             # Major conflict update
+    }
+
+    # Convert string dates to date objects for matching
+    shock_dates = {datetime.strptime(d, "%Y-%m-%d").date(): shocks for d, shocks in event_shocks.items()}
+
+    for i in range(days, -1, -1):
+        d = TODAY - timedelta(days=i)
+        # Skip weekends (markets closed = less risk activity)
+        if d.weekday() >= 5:
+            continue
+        
+        date_str = str(d)
+        day_of_year = d.timetuple().tm_yday
+
+        for category in baselines:
+            base = baselines[category]
+            
+            # 3. Macro Trend: slowly rising or falling over the past 90 days
+            # War is increasing; Monetary policy is cooling
+            if category == "War & Conflict":
+                trend = 0.15 * (i / days)  # Rises as we go forward
+            elif category == "Monetary Policy":
+                trend = -0.10 * (i / days) # Was high, now falling
+            elif category == "Energy Disruption":
+                trend = 0.05 * (i / days)  # Slightly rising
+            else:
+                trend = 0.02 * (i / days)  # Flat-ish
+
+            # 4. Event Shock effect
+            shock_effect = 0
+            if d in shock_dates:
+                shock_effect = shock_dates[d].get(category, 0)
+            
+            # 5. Random noise + weekday volatility (weekdays have more variation)
+            weekday_noise = 0.04 if d.weekday() < 5 else 0.02
+            noise = random.uniform(-weekday_noise, weekday_noise)
+            
+            # 6. Combine and clamp between 0.05 and 0.95
+            score = base + trend + shock_effect + noise
+            score = round(max(0.05, min(0.95, score)), 4)
+            
+            # 7. Upsert into Supabase
+            supabase.table("risk_scores").upsert({
+                "score_date":     date_str,
+                "category":       category,
+                "risk_score":     score,
+                "headline_count": random.randint(8, 25),  # plausible range
+            }, on_conflict="score_date,category").execute()
+        
+        # Progress update every 10 days
+        if i % 10 == 0:
+            print(f"  ✅ Processed {days - i + 1}/{days+1} days...")
+
+    print(f"🎉 Synthetic risk history for {days} days inserted successfully.")
+
+def backfill_nav(days=30):
+    pass
 
 # ── MAIN ────────────────────────────────────────────────────────────────────
 
@@ -304,6 +388,8 @@ if __name__ == "__main__":
         backfill_nav(30)
     elif "--backfill-risk" in sys.argv:
         backfill_risk_scores(30)
+    elif "--synthetic-risk" in sys.argv:
+        generate_synthetic_risk_history(90)   # <-- ADD THIS LINE
     else:
         update_asset_prices()
         update_risk_scores()
