@@ -120,15 +120,12 @@ operations monitoring. Prices updated daily via automated GitHub Actions pipelin
 drawdown, returns distribution, Sharpe ratio, correlation, and ARIMA price forecast.  
 **Tab 2 — Geopolitical Risk:** Daily risk scores across five categories derived from financial
 news headlines using FinBERT (domain-specific NLP model).  
-**Tab 3 — Prediction Markets:** Live Polymarket probabilities on macro and geopolitical events.  
-**Tab 4 — Fund Operations:** Institutional middle office monitoring — reconciliation breaks,
-SSI status, and trade settlement tracking.  
-**Tab 5 — AI Assistant:** Natural language queries interpreted against all live data.
+**Tab 3 — Prediction Markets:** Live Polymarket probabilities on macro and geopolitical events.    
+**Tab 4 — AI Assistant:** Natural language queries interpreted against all live data.
 """)
 
-tab1, tab2, tab3, tab4, tab5 = st.tabs([
-    "Thematic Portfolios", "Geopolitical Risk", "Prediction Markets",
-    "Fund Operations", "AI Assistant"
+tab1, tab2, tab3, tab4 = st.tabs([
+    "Thematic Portfolios", "Geopolitical Risk", "Prediction Markets", "AI Assistant"
 ])
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -348,7 +345,7 @@ with tab2:
         st.warning("No risk score data yet. Run the daily price refresh workflow on GitHub Actions.")
     else:
         risk_scores_df["score_date"] = pd.to_datetime(risk_scores_df["score_date"])
-        pivot_risk = risk_scores_df.pivot(index="score_date", columns="category", values="risk_score").sort_index()
+        pivot_risk = risk_scores_df.pivot(index="score_date", columns="category", values="risk_score").sort_index().fillna(0.5)
 
         st.subheader("Risk Score Heatmap — Last 30 Days")
         st.markdown("Scores range from 0 (no negative sentiment) to 1 (maximum negative/risk sentiment). Calculated as the average FinBERT negative-class probability across headlines for that category and day.")
@@ -443,7 +440,7 @@ with tab3:
             col1.markdown(f"**{row['title']}**")
             col1.caption(f"Category: {row['category']}")
             col2.metric("Probability", f"{prob:.0%}")
-            if row.get("url") and row["url"] != "https://polymarket.com/event/":
+            if row.get("url"):
                 col3.markdown(f"[View on Polymarket]({row['url']})")
             st.progress(prob)
             st.divider()
@@ -472,81 +469,12 @@ Answer concisely as a financial analyst would, referencing specific market proba
                 st.error(f"Error: {e}")
 
 
+
 # ══════════════════════════════════════════════════════════════════════════════
-# TAB 4 — FUND OPERATIONS
+# TAB 4 — AI ASSISTANT
 # ══════════════════════════════════════════════════════════════════════════════
 
 with tab4:
-    st.caption("Institutional middle office monitoring. Condensed view of reconciliation breaks, settlement instruction status, and trade settlement tracking across five UCITS and AIF funds.")
-
-    # KPI summary
-    open_breaks   = breaks_df[breaks_df["status"] == "Open"]
-    expired_ssi   = ssi_df[ssi_df["status"] == "Expired"]
-    today_date    = pd.Timestamp.today().date()
-    overdue_trades = trades_df[
-        (pd.to_datetime(trades_df["settlement_date"]).dt.date < today_date) &
-        (trades_df["status"].isin(["Pending","Failed"]))
-    ]
-
-    k1, k2, k3 = st.columns(3)
-    k1.metric("Open Reconciliation Breaks",
-              len(open_breaks),
-              delta=f"EUR {open_breaks['break_value_eur'].sum():,.0f} exposure",
-              delta_color="inverse")
-    k2.metric("Expired SSIs", len(expired_ssi),
-              delta="Settlement risk" if len(expired_ssi) > 0 else "All clear",
-              delta_color="inverse" if len(expired_ssi) > 0 else "normal")
-    k3.metric("Overdue Trades", len(overdue_trades),
-              delta="CSDR penalty risk" if len(overdue_trades) > 0 else "All clear",
-              delta_color="inverse" if len(overdue_trades) > 0 else "normal")
-
-    st.divider()
-
-    col_b, col_s = st.columns(2)
-
-    with col_b:
-        st.subheader("Open Reconciliation Breaks")
-        if not open_breaks.empty:
-            b_display = (open_breaks
-                         .merge(funds_df[["fund_id","name"]], on="fund_id", how="left")
-                         .merge(inst_df[["isin","name"]], on="isin", how="left", suffixes=("_fund","_inst")))
-            st.dataframe(
-                b_display[["name_fund","name_inst","break_qty","break_value_eur","break_type","created_date"]]
-                .sort_values("break_value_eur", ascending=False),
-                use_container_width=True
-            )
-        else:
-            st.success("No open breaks.")
-
-    with col_s:
-        st.subheader("Expired Settlement Instructions")
-        if not expired_ssi.empty:
-            e_display = (expired_ssi
-                         .merge(cps_df[["counterparty_id","name"]], on="counterparty_id", how="left")
-                         .merge(inst_df[["isin","name"]], on="isin", how="left", suffixes=("_cp","_inst")))
-            st.dataframe(
-                e_display[["name_cp","name_inst","valid_to","status"]].head(20),
-                use_container_width=True
-            )
-        else:
-            st.success("No expired SSIs.")
-
-    st.divider()
-    st.subheader("Fund NAV Overview")
-    nav_summary = (funds_df[["fund_id","name","fund_type","base_currency","aum_eur","nav_per_share"]]
-                   .copy())
-    nav_summary["aum_eur"] = nav_summary["aum_eur"].apply(lambda x: f"EUR {x/1e6:.1f}M")
-    st.dataframe(nav_summary.rename(columns={
-        "name":"Fund","fund_type":"Type","base_currency":"CCY",
-        "aum_eur":"AUM","nav_per_share":"NAV/Share"
-    }), use_container_width=True)
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-# TAB 5 — AI ASSISTANT
-# ══════════════════════════════════════════════════════════════════════════════
-
-with tab5:
     st.caption("Ask any question about the data in plain English. The assistant has access to current asset prices, risk scores, Polymarket probabilities, and fund operations data.")
 
     def build_full_context():
