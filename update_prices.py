@@ -407,7 +407,6 @@ MACRO_SERIES = {
 }
 
 def fetch_fred_series(series_id, start_date=None):
-    print(f"  FRED_API_KEY present: {bool(FRED_API_KEY)}")
     if not FRED_API_KEY:
         return []
     params = {
@@ -421,7 +420,9 @@ def fetch_fred_series(series_id, start_date=None):
     try:
         r = requests.get("https://api.stlouisfed.org/fred/series/observations", params=params, timeout=15)
         if r.status_code == 200:
-            return r.json().get("observations", [])
+            obs = r.json().get("observations", [])
+            print(f"  {series_id}: API returned {len(obs)} observations")
+            return obs
         else:
             print(f"  FRED returned status {r.status_code}: {r.text[:200]}")
     except Exception as e:
@@ -444,8 +445,8 @@ def update_macro_series(backfill=False):
                     "value":       float(o["value"]),
                 }, on_conflict="series_id,series_date").execute()
                 saved += 1
-            except Exception:
-                pass
+            except Exception as e:
+                print(f"  Upsert failed for {series_id} {o['date']}: {e}")
         print(f"  {series_id} ({label}): {saved} points saved")
 
     try:
