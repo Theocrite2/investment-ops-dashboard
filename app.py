@@ -124,8 +124,8 @@ news headlines using FinBERT (domain-specific NLP model).
 **Tab 4 — AI Assistant:** Natural language queries interpreted against all live data.
 """)
 
-tab1, tab2, tab3, tab4 = st.tabs([
-    "Thematic Portfolios", "Geopolitical Risk", "Prediction Markets", "AI Assistant"
+tab1, tab2, tab3, tab4, tab5 = st.tabs([
+    "Thematic Portfolios", "Geopolitical Risk", "Prediction Markets", "Macro", "AI Assistant"
 ])
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -467,13 +467,121 @@ Answer concisely as a financial analyst would, referencing specific market proba
             except Exception as e:
                 st.error(f"Error: {e}")
 
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-# TAB 4 — AI ASSISTANT
-# ══════════════════════════════════════════════════════════════════════════════
-
 with tab4:
+    st.caption("Yield curve, real yields, liquidity and a semiconductor proxy, cross-checked against gold and AI & Tech exposure. Sourced from FRED and Yahoo Finance.")
+
+    macro_df = load("macro_series")
+
+    if macro_df.empty:
+        st.warning("No macro data yet. Run update_prices.py --backfill-macro once, or trigger the daily refresh workflow.")
+    else:
+        macro_df["series_date"] = pd.to_datetime(macro_df["series_date"])
+        macro_pivot = macro_df.pivot_table(index="series_date", columns="series_id", values="value").sort_index()
+
+        st.subheader("Yield Curve & Spreads")
+        spread_cols = [c for c in ["DGS10","T10Y2Y","T10Y3M"] if c in macro_pivot.columns]
+        if spread_cols:
+            fig_yield = go.Figure()
+            for col in spread_cols:
+                fig_yield.add_trace(go.Scatter(x=macro_pivot.index, y=macro_pivot[col], mode="lines", name=col))
+            fig_yield.update_layout(title="10Y Yield and Key Spreads", xaxis_title="Date", yaxis_title="Percent (%)")
+            st.plotly_chart(fig_yield, use_container_width=True)
+
+        method_expander(
+            "Yield Curve & Spreads",
+            "The 10-year Treasury yield alongside the 10Y-2Y and 10Y-3M spreads — the classic recession-signalling curve.",
+            "Daily series from FRED: DGS10, T10Y2Y (10Y minus 2Y), T10Y3M (10Y minus 3M). A negative spread means the curve is inverted.",
+            "A spread below zero has historically preceded most US recessions since 1970, typically with a 6 to 24 month lag. Steepening from negative toward zero can reflect either falling short rates (easing) or rising long rates (growth or inflation expectations) — the two imply different things and the chart alone doesn't distinguish them.",
+            "A probabilistic historical signal, not a mechanical trigger. Lag length varies widely across cycles and false positives exist."
+        )
+
+        st.divider()
+        col_ry, col_liq = st.columns(2)
+
+        with col_ry:
+            st.subheader("Real Yields vs Gold")
+            if "DFII10" in macro_pivot.columns:
+                gold_prices = load_prices_for_ticker("GLD")
+                fig_ry = go.Figure()
+                fig_ry.add_trace(go.Scatter(x=macro_pivot.index, y=macro_pivot["DFII10"],
+                                            mode="lines", name="10Y Real Yield (DFII10)", line=dict(color="#C45D0B")))
+                if not gold_prices.empty:
+                    fig_ry.add_trace(go.Scatter(x=gold_prices["price_date"], y=gold_prices["close"],
+                                                mode="lines", name="Gold (GLD)", yaxis="y2", line=dict(color="#D4AF37")))
+                fig_ry.update_layout(
+                    title="Real Yields vs Gold Price", xaxis_title="Date",
+                    yaxis=dict(title="Real Yield (%)"),
+                    yaxis2=dict(title="GLD Price ($)", overlaying="y", side="right"),
+                )
+                st.plotly_chart(fig_ry, use_container_width=True)
+            method_expander(
+                "Real Yields vs Gold",
+                "Whether gold is moving in the historically expected inverse relationship with real (inflation-adjusted) yields.",
+                "DFII10, the 10-year TIPS yield from FRED, plotted against GLD's closing price on a secondary axis.",
+                "Gold pays no yield, so as real yields rise, the opportunity cost of holding gold rises and gold has historically weakened, and vice versa. Gold rising alongside rising real yields signals it's being bought for a different reason — currency, geopolitical, or monetary-risk hedging.",
+                "A historical tendency, not a fixed formula. Has decoupled for extended periods, including recently."
+            )
+
+        with col_liq:
+            st.subheader("Liquidity Trend")
+            if "WALCL" in macro_pivot.columns and "M2SL" in macro_pivot.columns:
+                walcl_norm = macro_pivot["WALCL"] / macro_pivot["WALCL"].iloc[0] * 100
+                m2_norm    = macro_pivot["M2SL"] / macro_pivot["M2SL"].iloc[0] * 100
+                fig_liq = go.Figure()
+                fig_liq.add_trace(go.Scatter(x=macro_pivot.index, y=walcl_norm, mode="lines", name="Fed Balance Sheet (indexed)"))
+                fig_liq.add_trace(go.Scatter(x=macro_pivot.index, y=m2_norm, mode="lines", name="M2 Money Supply (indexed)"))
+                fig_liq.update_layout(title="Liquidity Proxy (Indexed to 100)", xaxis_title="Date", yaxis_title="Index")
+                st.plotly_chart(fig_liq, use_container_width=True)
+            method_expander(
+                "Liquidity Trend",
+                "Whether the broader pool of dollar liquidity underpinning asset prices is expanding or contracting.",
+                "Fed total assets (WALCL) and M2 money supply (M2SL) from FRED, indexed to 100 at the start of the window so both are comparable on one scale.",
+                "A rising line means expanding liquidity — historically supportive for risk assets and crypto. A falling line means tightening conditions.",
+                "A simplified two-series proxy, not the full global liquidity picture (ECB, PBoC, BoJ balance sheets are excluded). Directional, not precise."
+            )
+
+        st.divider()
+        st.subheader("Semiconductor Proxy vs AI & Tech Exposure")
+        if "SOXX" in macro_pivot.columns:
+            fig_semi = px.line(x=macro_pivot.index, y=macro_pivot["SOXX"],
+                               labels={"x": "Date", "y": "SOXX Price ($)"}, title="iShares Semiconductor ETF (SOXX)")
+            st.plotly_chart(fig_semi, use_container_width=True)
+        method_expander(
+            "Semiconductor Proxy",
+            "A real-economy read on global chip demand, used as context for the AI & Tech theme.",
+            "SOXX (iShares Semiconductor ETF) daily close from Yahoo Finance, tracking a basket of US-listed semiconductor companies.",
+            "Chip demand sits upstream of most AI and tech hardware. SOXX strength alongside NVDA/AMD strength in Tab 1 corroborates the AI & Tech move; divergence is worth investigating before treating either move as confirmed.",
+            "A market price reflecting investor expectations, not a trade-flow or production number. Export-based data such as South Korean semiconductor shipments would be a stronger complement but has no reliable free source, so it's excluded here."
+        )
+
+        st.divider()
+        st.subheader("Signal Convergence")
+        try:
+            spread_now = macro_pivot["T10Y2Y"].dropna().iloc[-1]
+            spread_30d = macro_pivot["T10Y2Y"].dropna().iloc[-22] if len(macro_pivot["T10Y2Y"].dropna()) > 22 else spread_now
+            liq_now    = macro_pivot["WALCL"].dropna().iloc[-1]
+            liq_start  = macro_pivot["WALCL"].dropna().iloc[0]
+            ry_now     = macro_pivot["DFII10"].dropna().iloc[-1]
+            ry_30d     = macro_pivot["DFII10"].dropna().iloc[-22] if len(macro_pivot["DFII10"].dropna()) > 22 else ry_now
+
+            curve_state = "inverted" if spread_now < 0 else "positive"
+            curve_dir   = "steepening" if spread_now > spread_30d else "flattening"
+            liq_dir     = "expanding" if liq_now > liq_start else "contracting"
+            ry_dir      = "rising" if ry_now > ry_30d else "falling"
+
+            st.info(f"""
+The curve is **{curve_state}** and **{curve_dir}** (10Y-2Y at {spread_now:.2f}%). Liquidity is **{liq_dir}** over the displayed window. Real yields are **{ry_dir}** ({ry_now:.2f}%) — the direct driver to weigh against the gold move above.
+
+Rules-based summary of the raw series, not a forecast. Ask the AI Assistant to cross-reference this with the geopolitical risk and Polymarket tabs.
+""")
+        except Exception:
+            st.info("Not enough history yet. Run the backfill once to populate 6 months of data.")
+
+# ══════════════════════════════════════════════════════════════════════════════
+# TAB 5 — AI ASSISTANT
+# ══════════════════════════════════════════════════════════════════════════════
+
+with tab5:
     st.caption("Ask any question about the data in plain English. The assistant has access to current asset prices, risk scores, Polymarket probabilities, and fund operations data.")
 
     def build_full_context():
@@ -508,6 +616,12 @@ with tab4:
         else:
             poly_summary = "No Polymarket data available"
 
+        try:
+            macro_raw = pd.DataFrame(supabase.table("macro_series").select("*").order("series_date", desc=True).limit(60).execute().data)
+            macro_summary = macro_raw.sort_values("series_date", ascending=False).groupby("series_id").first().reset_index()[["series_id","series_date","value"]].to_string(index=False) if not macro_raw.empty else "No macro data available"
+        except Exception:
+            macro_summary = "No macro data available"
+
         return f"""
 You are a financial analyst assistant with access to the following live data.
 Answer questions concisely and accurately. Where relevant, reference specific numbers from the data.
@@ -523,6 +637,9 @@ GEOPOLITICAL RISK SCORES (0=low risk, 1=high risk, FinBERT NLP):
 
 PREDICTION MARKET PROBABILITIES (Polymarket):
 {poly_summary}
+
+MACRO DATA (FRED yield curve, real yields, liquidity, SOXX semiconductor proxy):
+{macro_summary}
 
 """
 
@@ -556,6 +673,10 @@ PREDICTION MARKET PROBABILITIES (Polymarket):
         "Which fund has the most open reconciliation breaks and what is the total EUR exposure?",
         "What does fat tails in the returns distribution of BTC-USD tell us about tail risk?",
         "Which asset in the portfolio has the highest drawdown from peak right now?",
+        "What is the current 10-year minus 2-year yield spread, and is the curve inverted or steepening?",
+        "How is gold responding to the current move in real yields?",
+        "Is the semiconductor sector confirming or diverging from NVIDIA and AMD's recent performance?",
+        "Are liquidity conditions from the Fed balance sheet and M2 currently expanding or contracting?",
     ]
 
     for prompt_text in example_prompts:

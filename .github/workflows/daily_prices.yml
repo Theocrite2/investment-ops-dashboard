@@ -27,4 +27,8 @@ jobs:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
           GNEWS_KEY: ${{ secrets.GNEWS_KEY }}
+          FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
         run: .venv/bin/python update_prices.py
+
+
+        

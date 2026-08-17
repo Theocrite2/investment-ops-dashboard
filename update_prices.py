@@ -395,6 +395,69 @@ def generate_synthetic_risk_history(days=90):
 def backfill_nav(days=30):
     pass
 
+FRED_API_KEY = os.environ.get("FRED_API_KEY", "")
+
+MACRO_SERIES = {
+    "DGS10":  "10-Year Treasury Yield",
+    "T10Y2Y": "10Y-2Y Treasury Spread",
+    "T10Y3M": "10Y-3M Treasury Spread",
+    "DFII10": "10-Year TIPS (Real Yield)",
+    "WALCL":  "Fed Total Assets (Balance Sheet)",
+    "M2SL":   "M2 Money Supply",
+}
+
+def fetch_fred_series(series_id, start_date=None):
+    if not FRED_API_KEY:
+        return []
+    params = {
+        "series_id": series_id,
+        "api_key": FRED_API_KEY,
+        "file_type": "json",
+        "sort_order": "asc",
+    }
+    if start_date:
+        params["observation_start"] = start_date
+    try:
+        r = requests.get("https://api.stlouisfed.org/fred/series/observations", params=params, timeout=15)
+        if r.status_code == 200:
+            return r.json().get("observations", [])
+    except Exception as e:
+        print(f"  FRED fetch failed for {series_id}: {e}")
+    return []
+
+def update_macro_series(backfill=False):
+    print("Updating macro series (FRED)...")
+    start = str(TODAY - timedelta(days=190)) if backfill else str(TODAY - timedelta(days=7))
+    for series_id, label in MACRO_SERIES.items():
+        obs = fetch_fred_series(series_id, start_date=start)
+        saved = 0
+        for o in obs:
+            if o.get("value") == ".":
+                continue
+            try:
+                supabase.table("macro_series").upsert({
+                    "series_id":   series_id,
+                    "series_date": o["date"],
+                    "value":       float(o["value"]),
+                }, on_conflict="series_id,series_date").execute()
+                saved += 1
+            except Exception:
+                pass
+        print(f"  {series_id} ({label}): {saved} points saved")
+
+    try:
+        df = yf.Ticker("SOXX").history(period="6mo" if backfill else "5d")
+        df = df.dropna()
+        for idx, row in df.iterrows():
+            supabase.table("macro_series").upsert({
+                "series_id":   "SOXX",
+                "series_date": str(idx.date()),
+                "value":       round(float(row["Close"]), 4),
+            }, on_conflict="series_id,series_date").execute()
+        print(f"  SOXX: {len(df)} points saved")
+    except Exception as e:
+        print(f"  SOXX failed: {e}")
+
 # ── MAIN ────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
@@ -402,12 +465,13 @@ if __name__ == "__main__":
         backfill_nav(30)
     elif "--backfill-risk" in sys.argv:
         backfill_risk_scores(30)
-    elif "--synthetic-risk" in sys.argv:
-        generate_synthetic_risk_history(90)   # <-- ADD THIS LINE
+    elif "--backfill-macro" in sys.argv:
+        update_macro_series(backfill=True)
     else:
         update_asset_prices()
         update_risk_scores()
         update_polymarket()
         append_nav_today()
         update_fund_instrument_prices()
+        update_macro_series(backfill=False)
     print("Done.")
