@@ -482,9 +482,18 @@ with tab4:
         spread_cols = [c for c in ["DGS10","T10Y2Y","T10Y3M"] if c in macro_pivot.columns]
         if spread_cols:
             fig_yield = go.Figure()
-            for col in spread_cols:
-                fig_yield.add_trace(go.Scatter(x=macro_pivot.index, y=macro_pivot[col], mode="lines", name=col))
-            fig_yield.update_layout(title="10Y Yield and Key Spreads", xaxis_title="Date", yaxis_title="Percent (%)")
+            if "DGS10" in macro_pivot.columns:
+                fig_yield.add_trace(go.Scatter(x=macro_pivot.index, y=macro_pivot["DGS10"], mode="lines", name="DGS10 (10Y Yield)", line=dict(color="#4A7CC7")))
+            if "T10Y2Y" in macro_pivot.columns:
+                fig_yield.add_trace(go.Scatter(x=macro_pivot.index, y=macro_pivot["T10Y2Y"], mode="lines", name="T10Y2Y Spread", yaxis="y2", line=dict(color="#C45D0B")))
+            if "T10Y3M" in macro_pivot.columns:
+                fig_yield.add_trace(go.Scatter(x=macro_pivot.index, y=macro_pivot["T10Y3M"], mode="lines", name="T10Y3M Spread", yaxis="y2", line=dict(color="#A0B8A0")))
+            fig_yield.update_layout(
+                title="10Y Yield (left) vs Key Spreads (right)",
+                xaxis_title="Date",
+                yaxis=dict(title="10Y Yield (%)"),
+                yaxis2=dict(title="Spread (%)", overlaying="y", side="right"),
+            )
             st.plotly_chart(fig_yield, use_container_width=True)
 
         method_expander(
@@ -525,13 +534,18 @@ with tab4:
         with col_liq:
             st.subheader("Liquidity Trend")
             if "WALCL" in macro_pivot.columns and "M2SL" in macro_pivot.columns:
-                walcl_norm = macro_pivot["WALCL"] / macro_pivot["WALCL"].iloc[0] * 100
-                m2_norm    = macro_pivot["M2SL"] / macro_pivot["M2SL"].iloc[0] * 100
-                fig_liq = go.Figure()
-                fig_liq.add_trace(go.Scatter(x=macro_pivot.index, y=walcl_norm, mode="lines", name="Fed Balance Sheet (indexed)"))
-                fig_liq.add_trace(go.Scatter(x=macro_pivot.index, y=m2_norm, mode="lines", name="M2 Money Supply (indexed)"))
-                fig_liq.update_layout(title="Liquidity Proxy (Indexed to 100)", xaxis_title="Date", yaxis_title="Index")
-                st.plotly_chart(fig_liq, use_container_width=True)
+                walcl_series = macro_pivot["WALCL"].dropna()
+                m2_series    = macro_pivot["M2SL"].dropna()
+                if not walcl_series.empty and not m2_series.empty:
+                    walcl_norm = walcl_series / walcl_series.iloc[0] * 100
+                    m2_norm    = m2_series / m2_series.iloc[0] * 100
+                    fig_liq = go.Figure()
+                    fig_liq.add_trace(go.Scatter(x=walcl_norm.index, y=walcl_norm.values, mode="lines", name="Fed Balance Sheet (indexed)"))
+                    fig_liq.add_trace(go.Scatter(x=m2_norm.index, y=m2_norm.values, mode="lines", name="M2 Money Supply (indexed)"))
+                    fig_liq.update_layout(title="Liquidity Proxy (Indexed to 100)", xaxis_title="Date", yaxis_title="Index")
+                    st.plotly_chart(fig_liq, use_container_width=True)
+                else:
+                    st.info("Not enough liquidity data points yet.")
             method_expander(
                 "Liquidity Trend",
                 "Whether the broader pool of dollar liquidity underpinning asset prices is expanding or contracting.",
