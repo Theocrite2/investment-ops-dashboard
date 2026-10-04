@@ -159,6 +159,14 @@ def update_polymarket():
             print(f"  Polymarket API returned {r.status_code}")
             return
 
+        # Clear stale rows. The API only returns active/unresolved markets,
+        # so anything left in the table from a prior run that has since
+        # resolved or closed would otherwise never be removed by upsert alone.
+        try:
+            supabase.table("polymarket_markets").delete().neq("market_id", "").execute()
+        except Exception as e:
+            print(f"  Failed to clear stale polymarket rows: {e}")
+
         markets = r.json()
         relevant_keywords = [
             "federal reserve", "interest rate", "bitcoin", "recession",
