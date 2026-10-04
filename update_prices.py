@@ -75,12 +75,15 @@ def update_asset_prices():
 
 # ── 2. NLP RISK SCORES ───────────────────────────────────────────────────────
 
+# GNews search phrases per category (all terms are OR-ed). Bare generic words such
+# as "war" or "interest rates" pull in film titles, video games, sport and retail
+# finance, so every term here is a specific phrase.
 RISK_CATEGORIES = {
-    "War & Conflict":      ["war", "military conflict", "invasion", "troops", "airstrike", "ceasefire"],
-    "Energy Disruption":   ["oil disruption", "gas supply", "OPEC", "energy crisis", "pipeline attack"],
-    "Trade & Sanctions":   ["sanctions", "trade war", "tariffs", "export ban", "embargo", "trade restrictions"],
-    "Monetary Policy":     ["Federal Reserve", "interest rates", "inflation", "ECB rate", "rate hike", "rate cut"],
-    "Tech Regulation":     ["AI regulation", "antitrust tech", "semiconductor ban", "chip export", "big tech fine"],
+    "War & Conflict":      ["airstrike", "missile attack", "ceasefire", "military escalation"],
+    "Energy Disruption":   ["oil supply", "OPEC", "Strait of Hormuz", "energy crisis"],
+    "Trade & Sanctions":   ["tariffs", "economic sanctions", "export controls", "trade war"],
+    "Monetary Policy":     ["Federal Reserve", "central bank", "rate hike", "rate cut"],
+    "Tech Regulation":     ["AI regulation", "antitrust tech", "chip export"],
 }
 
 
@@ -97,7 +100,7 @@ def fetch_headlines(keywords, max_results=10):
     print(f"  Fetching headlines, GNEWS_KEY present: {bool(GNEWS_KEY)}")
     if not GNEWS_KEY:
         return []
-    query = " OR ".join(f'"{kw}"' for kw in keywords[:2])
+    query = " OR ".join(f'"{kw}"' for kw in keywords)
     try:
         r = requests.get(
             "https://gnews.io/api/v4/search",

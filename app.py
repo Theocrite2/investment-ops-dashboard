@@ -1,4 +1,5 @@
 import os
+import re
 import warnings
 from datetime import date, timedelta
 warnings.filterwarnings("ignore")
@@ -60,6 +61,12 @@ def load_recent_headlines(days=30):
         lambda: supabase.table("risk_headlines").select("*").gte("headline_date", since).order("id")
     ))
 
+_MONTHS = r"(?:january|february|march|april|may|june|july|august|september|october|november|december)"
+# Daily/weekly price ladders ("above $X on October 3", "September 28-October 4",
+# "Up or Down on ...") expire within days and carry no macro signal.
+SHORT_DATED_MARKET = re.compile(
+    rf"\bup or down\b|\bon {_MONTHS} \d{{1,2}}\b|\b{_MONTHS} \d{{1,2}}\s*-\s*(?:{_MONTHS} )?\d{{1,2}}\b", re.I)
+
 @st.cache_data(ttl=300)
 def load_latest_polymarket():
     """Only the most recent pipeline snapshot. Older rows belong to markets
@@ -68,7 +75,16 @@ def load_latest_polymarket():
     if df.empty:
         return df
     df["last_updated"] = pd.to_datetime(df["last_updated"])
-    return df[df["last_updated"] == df["last_updated"].max()].reset_index(drop=True)
+    df = df[df["last_updated"] == df["last_updated"].max()]
+    df = df[~df["title"].str.contains(SHORT_DATED_MARKET, na=False)]
+    return df.reset_index(drop=True)
+
+@st.cache_data(ttl=3600)
+def first_real_headline_date():
+    """Risk scores are only real from the first day headlines were actually
+    scored; earlier rows in risk_scores were synthetically generated."""
+    rows = supabase.table("risk_headlines").select("headline_date").order("headline_date").limit(1).execute().data
+    return pd.to_datetime(rows[0]["headline_date"]) if rows else None
 
 @st.cache_data(ttl=1800)
 def load_prices_for_ticker(ticker):
@@ -133,6 +149,9 @@ def method_expander(title, what, how, interpret, limitations):
 
 assets_df      = load("assets")
 risk_scores_df = load("risk_scores", "id")
+_real_start = first_real_headline_date()
+if not risk_scores_df.empty and _real_start is not None:
+    risk_scores_df = risk_scores_df[pd.to_datetime(risk_scores_df["score_date"]) >= _real_start].reset_index(drop=True)
 risk_headlines_df = load_recent_headlines(30)
 polymarket_df  = load_latest_polymarket()
 funds_df       = load("funds")
