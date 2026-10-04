@@ -431,7 +431,11 @@ def fetch_fred_series(series_id, start_date=None):
 
 def update_macro_series(backfill=False):
     print("Updating macro series (FRED)...")
-    start = str(TODAY - timedelta(days=190)) if backfill else str(TODAY - timedelta(days=7))
+    # Always use a wide lookback window. FRED dates monthly/weekly series
+    # (M2SL, WALCL) on a fixed day within their period, so a narrow 7-day
+    # window permanently misses them once that day falls outside it — the
+    # on_conflict upsert below makes re-fetching the same range harmless.
+    start = str(TODAY - timedelta(days=190))
     for series_id, label in MACRO_SERIES.items():
         obs = fetch_fred_series(series_id, start_date=start)
         saved = 0
