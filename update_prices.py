@@ -16,8 +16,9 @@ import os
 import random
 import sys
 import json
+import re
 from datetime import date, timedelta
-from datetime import datetime
+from datetime import datetime, timezone
 
 import requests
 import yfinance as yf
@@ -144,98 +145,131 @@ def update_risk_scores():
         print(f"  {category}: {avg_score:.3f} ({len(scores)} headlines)")
 
 
-# ── 3. POLYMARKET ─────────────────────────────────────────────────────────────
+# ── POLYMARKET ───────────────────────────────────────────────────────────────
+
+POLY_PAGES = 10              # pool = 10 x 100 most-traded markets (24h volume)
+POLY_MIN_DAYS_TO_END = 3     # skip markets resolving within 3 days
+POLY_MIN_VOLUME = 50_000     # total USD traded
+POLY_PER_CATEGORY = 3        # diversity cap
+POLY_MAX_TOTAL = 20
+
+# Checked in order; the first match decides the category. Word boundaries
+# prevent substring hits such as "nato" inside "Senators" or "Cecchinato".
+POLY_CATEGORIES = [
+    ("War & Conflict",       r"war|invade|invasion|military|ceasefire|strikes?|nato|russia|ukraine|iran|israel|gaza|taiwan|north korea|nuclear"),
+    ("Monetary Policy",      r"fed|federal reserve|fomc|powell|interest rates?|rate cuts?|rate hikes?|bps|ecb|bank of england|bank of japan|boj"),
+    ("Trade & Tariffs",      r"tariffs?|trade deal|trade war|sanctions?|export controls?|embargo"),
+    ("Energy & Commodities", r"oil|crude|brent|wti|opec|natural gas|gold|silver|copper"),
+    ("Crypto",               r"bitcoin|btc|ethereum|eth|solana|crypto|stablecoins?"),
+    ("AI & Tech",            r"ai|openai|anthropic|nvidia|gpt|chips?|semiconductors?|data centers?|apple|microsoft|alphabet|google|meta|tesla|ipo"),
+    ("Macro",                r"recession|inflation|cpi|gdp|unemployment|jobs report|s&p 500|nasdaq|dow|treasury|yields?|debt ceiling|government shutdown|default"),
+    ("Politics & Elections", r"elections?|president|presidential|prime minister|senate|house|congress|parliament|balance of power|impeach\w*"),
+]
+POLY_CATEGORY_RE = [(name, re.compile(rf"\b(?:{pat})\b", re.I)) for name, pat in POLY_CATEGORIES]
+
+POLY_SPORTS_RE = re.compile(
+    r"\b(?:vs\.?|nfl|nba|wnba|nhl|mlb|mls|ufc|mma|nascar|f1|formula 1|grand prix|"
+    r"premier league|champions league|europa league|la liga|serie a|bundesliga|ligue 1|uefa|fifa|"
+    r"world cup|super bowl|stanley cup|world series|playoffs?|championship|tournament|"
+    r"o/u|over/under|spread|atp|wta|us open|wimbledon|cricket|rugby|golf|pga|boxing|tennis|"
+    r"soccer|football|basketball|baseball|hockey|esports?|dota|counter-strike|cs2|valorant|"
+    r"league of legends|bo[35]|mvp|heisman|win on \d{4}-\d{2}-\d{2})\b", re.I)
+
+_MONTHS = r"(?:january|february|march|april|may|june|july|august|september|october|november|december)"
+# Daily/weekly price ladders: "Up or Down on ...", "above $X on October 3", "September 28-October 4"
+POLY_NOISE_RE = re.compile(
+    rf"\bup or down\b|\bon {_MONTHS} \d{{1,2}}\b|\b{_MONTHS} \d{{1,2}}\s*-\s*(?:{_MONTHS} )?\d{{1,2}}\b", re.I)
+
+
+def fetch_polymarket_pool(end_min):
+    pool, seen = [], set()
+    for page in range(POLY_PAGES):
+        r = requests.get(
+            "https://gamma-api.polymarket.com/markets",
+            params={"active": "true", "closed": "false", "limit": 100, "offset": page * 100,
+                    "order": "volume24hr", "ascending": "false",
+                    "end_date_min": end_min.strftime("%Y-%m-%dT%H:%M:%SZ")},
+            timeout=15,
+        )
+        if r.status_code != 200:
+            print(f"  Polymarket API returned {r.status_code} on page {page}")
+            break
+        batch = r.json()
+        for m in batch:
+            mid = str(m.get("id") or m.get("conditionId") or "")
+            if mid and mid not in seen:
+                seen.add(mid)
+                pool.append(m)
+        if len(batch) < 100:
+            break
+    return pool
+
+
+def yes_probability(m):
+    """Probability of the 'Yes' outcome, or None if the market is not a Yes/No market."""
+    try:
+        prices = m.get("outcomePrices") or "[]"
+        outcomes = m.get("outcomes") or "[]"
+        prices = json.loads(prices) if isinstance(prices, str) else prices
+        outcomes = json.loads(outcomes) if isinstance(outcomes, str) else outcomes
+        if "Yes" not in outcomes:
+            return None
+        return float(prices[outcomes.index("Yes")])
+    except Exception:
+        return None
+
 
 def update_polymarket():
     print("Updating Polymarket probabilities...")
     try:
-        r = requests.get(
-            "https://gamma-api.polymarket.com/markets",
-            params={"active": True, "closed": False, "limit": 100,
-                    "order": "volume24hr", "ascending": False},
-            timeout=15
-        )
-        if r.status_code != 200:
-            print(f"  Polymarket API returned {r.status_code}")
-            return
+        end_min = datetime.now(timezone.utc) + timedelta(days=POLY_MIN_DAYS_TO_END)
+        pool = fetch_polymarket_pool(end_min)
+        print(f"  {len(pool)} active markets fetched")
 
-        # Clear stale rows. The API only returns active/unresolved markets,
-        # so anything left in the table from a prior run that has since
-        # resolved or closed would otherwise never be removed by upsert alone.
-        try:
-            supabase.table("polymarket_markets").delete().neq("market_id", "").execute()
-        except Exception as e:
-            print(f"  Failed to clear stale polymarket rows: {e}")
-
-        markets = r.json()
-        relevant_keywords = [
-            "federal reserve", "interest rate", "bitcoin", "recession",
-            "inflation", "russia ukraine", "iran israel", "oil price",
-            "nvidia earnings", "trump tariffs", "china trade",
-            "ceasefire", "nato", "fed rate cut", "s&p 500"
-        ]
-
-        saved = 0
-        for m in markets:
-            title = m.get("question", m.get("title", "")).lower()
-            # Skip sports markets
-            if any(w in title for w in ["psg","paris saint-germain","champions league","soccer","football","nfl","nba","nhl","mlb","win on","goal","score","match","league","cup","tournament","player","team","sport"]):
+        rows, per_cat = [], {}
+        for m in pool:
+            title = (m.get("question") or m.get("title") or "").strip()
+            if not title or POLY_SPORTS_RE.search(title) or POLY_NOISE_RE.search(title):
                 continue
-            if not any(kw in title for kw in relevant_keywords):
+            category = next((name for name, rx in POLY_CATEGORY_RE if rx.search(title)), None)
+            if category is None or per_cat.get(category, 0) >= POLY_PER_CATEGORY:
                 continue
             try:
-                outcome_prices = m.get("outcomePrices", "[]")
-                outcomes = m.get("outcomes", "[]")
-                if isinstance(outcome_prices, str):
-                    outcome_prices = json.loads(outcome_prices)
-                if isinstance(outcomes, str):
-                    outcomes = json.loads(outcomes)
-                if outcomes and outcome_prices:
-                    yes_idx = outcomes.index("Yes") if "Yes" in outcomes else 0
-                    prob = float(outcome_prices[yes_idx])
-                else:
-                    prob = 0.5
+                if datetime.fromisoformat(m["endDate"].replace("Z", "+00:00")) < end_min:
+                    continue
             except Exception:
-                prob = 0.5
-
-            if prob > 0.97 or prob < 0.03:
+                continue
+            if float(m.get("volumeNum") or m.get("volume") or 0) < POLY_MIN_VOLUME:
+                continue
+            prob = yes_probability(m)
+            if prob is None or not 0.03 <= prob <= 0.97:
                 continue
 
-            category = "Macro"
-            if any(w in title for w in ["war","conflict","ukraine","russia","iran","israel","ceasefire"]):
-                category = "War & Conflict"
-            elif any(w in title for w in ["fed","rate","inflation","recession"]):
-                category = "Monetary Policy"
-            elif any(w in title for w in ["bitcoin","btc","crypto","eth"]):
-                category = "Crypto"
-            elif any(w in title for w in ["oil","energy","opec"]):
-                category = "Energy"
-            elif any(w in title for w in ["election","president","senate"]):
-                category = "Politics"
-
-            market_id = m.get("id", m.get("conditionId", str(saved)))
-            
-            slug = m.get("groupSlug") or m.get("slug")
-            market_url = None
-            if slug and isinstance(slug, str) and len(slug) > 3 and not slug.startswith("0x"):
-                market_url = f"https://polymarket.com/event/{slug}"
-            supabase.table("polymarket_markets").upsert({
-                "market_id":    str(market_id),
-                "title":        m.get("question", m.get("title", ""))[:300],
+            events = m.get("events") or []
+            event_slug = events[0].get("slug") if events and isinstance(events[0], dict) else None
+            rows.append({
+                "market_id":    str(m.get("id") or m.get("conditionId")),
+                "title":        title[:300],
                 "category":     category,
                 "current_prob": round(prob, 4),
-                "url":          market_url,
+                "url":          f"https://polymarket.com/event/{event_slug}" if event_slug else None,
                 "last_updated": str(TODAY),
-            }).execute()
-
-            volume = float(m.get("volume", 0) or 0)
-            if volume < 10000:
-                continue
-            saved += 1
-            if saved >= 15:
+            })
+            per_cat[category] = per_cat.get(category, 0) + 1
+            if len(rows) >= POLY_MAX_TOTAL:
                 break
 
-        print(f"  {saved} Polymarket markets updated.")
+        if not rows:
+            print("  No qualifying markets today; previous snapshot kept.")
+            return
+
+        for row in rows:
+            supabase.table("polymarket_markets").upsert(row, on_conflict="market_id").execute()
+
+        # Remove everything not refreshed today: resolved, expired or no longer qualifying.
+        supabase.table("polymarket_markets").delete().lt("last_updated", str(TODAY)).execute()
+        print(f"  {len(rows)} Polymarket markets saved: "
+              + ", ".join(f"{k} {v}" for k, v in per_cat.items()))
     except Exception as e:
         print(f"  Polymarket failed: {e}")
 
