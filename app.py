@@ -11,7 +11,7 @@ import plotly.graph_objects as go
 import requests
 import streamlit as st
 from dotenv import load_dotenv
-from supabase import create_client
+from supabase import create_client, ClientOptions
 import google.generativeai as genai
 
 load_dotenv()
@@ -20,7 +20,7 @@ SUPABASE_URL = st.secrets.get("SUPABASE_URL", os.environ.get("SUPABASE_URL"))
 SUPABASE_KEY = st.secrets.get("SUPABASE_KEY", os.environ.get("SUPABASE_KEY"))
 GEMINI_KEY   = st.secrets.get("GEMINI_API_KEY", os.environ.get("GEMINI_API_KEY"))
 
-supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+supabase = create_client(SUPABASE_URL, SUPABASE_KEY, options=ClientOptions(postgrest_client_timeout=15))
 genai.configure(api_key=GEMINI_KEY)
 ai_model = genai.GenerativeModel("gemini-3.6-flash")
 
@@ -40,12 +40,13 @@ def fetch_all(build_query):
     """Page through a query until every row is retrieved. build_query must
     return a fresh, deterministically ordered query on each call."""
     rows, start = [], 0
-    while True:
+    for _ in range(100):  # hard stop, never loop forever
         batch = build_query().range(start, start + PAGE_SIZE - 1).execute().data
         rows.extend(batch)
         if len(batch) < PAGE_SIZE:
             return rows
         start += PAGE_SIZE
+    return rows
 
 @st.cache_data(ttl=21600)
 def load(table, order_col=None):
