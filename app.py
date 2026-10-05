@@ -47,14 +47,14 @@ def fetch_all(build_query):
             return rows
         start += PAGE_SIZE
 
-@st.cache_data(ttl=300)
+@st.cache_data(ttl=21600)
 def load(table, order_col=None):
     def query():
         q = supabase.table(table).select("*")
         return q.order(order_col) if order_col else q
     return pd.DataFrame(fetch_all(query))
 
-@st.cache_data(ttl=300)
+@st.cache_data(ttl=21600)
 def load_recent_headlines(days=30):
     since = str(date.today() - timedelta(days=days))
     return pd.DataFrame(fetch_all(
@@ -67,7 +67,7 @@ _MONTHS = r"(?:january|february|march|april|may|june|july|august|september|octob
 SHORT_DATED_MARKET = re.compile(
     rf"\bup or down\b|\bon {_MONTHS} \d{{1,2}}\b|\b{_MONTHS} \d{{1,2}}\s*-\s*(?:{_MONTHS} )?\d{{1,2}}\b", re.I)
 
-@st.cache_data(ttl=300)
+@st.cache_data(ttl=21600)
 def load_latest_polymarket():
     """Only the most recent pipeline snapshot. Older rows belong to markets
     that have since resolved or dropped out of the live feed."""
@@ -86,7 +86,7 @@ def first_real_headline_date():
     rows = supabase.table("risk_headlines").select("headline_date").order("headline_date").limit(1).execute().data
     return pd.to_datetime(rows[0]["headline_date"]) if rows else None
 
-@st.cache_data(ttl=1800)
+@st.cache_data(ttl=21600)
 def load_prices_for_ticker(ticker):
     df = pd.DataFrame(fetch_all(
         lambda: supabase.table("asset_prices").select("*").eq("ticker", ticker).order("id")
@@ -96,7 +96,7 @@ def load_prices_for_ticker(ticker):
         df = df.sort_values("price_date").reset_index(drop=True)
     return df
 
-@st.cache_data(ttl=60)
+@st.cache_data(ttl=21600)
 def load_prices_for_theme(theme, assets_df):
     tickers = assets_df[assets_df["theme"] == theme]["ticker"].tolist()
     if not tickers:
