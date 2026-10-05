@@ -1,5 +1,7 @@
 import os
+import re
 import warnings
+from datetime import date, timedelta
 warnings.filterwarnings("ignore")
 
 import numpy as np
@@ -29,15 +31,66 @@ st.set_page_config(
 )
 
 # ── DATA LOADING ──────────────────────────────────────────────────────────────
+# Supabase caps every API response at 1,000 rows. Without paging, any table
+# larger than that is silently truncated to its oldest 1,000 rows.
+
+PAGE_SIZE = 1000
+
+def fetch_all(build_query):
+    """Page through a query until every row is retrieved. build_query must
+    return a fresh, deterministically ordered query on each call."""
+    rows, start = [], 0
+    while True:
+        batch = build_query().range(start, start + PAGE_SIZE - 1).execute().data
+        rows.extend(batch)
+        if len(batch) < PAGE_SIZE:
+            return rows
+        start += PAGE_SIZE
 
 @st.cache_data(ttl=300)
-def load(table):
-    return pd.DataFrame(supabase.table(table).select("*").execute().data)
+def load(table, order_col=None):
+    def query():
+        q = supabase.table(table).select("*")
+        return q.order(order_col) if order_col else q
+    return pd.DataFrame(fetch_all(query))
+
+@st.cache_data(ttl=300)
+def load_recent_headlines(days=30):
+    since = str(date.today() - timedelta(days=days))
+    return pd.DataFrame(fetch_all(
+        lambda: supabase.table("risk_headlines").select("*").gte("headline_date", since).order("id")
+    ))
+
+_MONTHS = r"(?:january|february|march|april|may|june|july|august|september|october|november|december)"
+# Daily/weekly price ladders ("above $X on October 3", "September 28-October 4",
+# "Up or Down on ...") expire within days and carry no macro signal.
+SHORT_DATED_MARKET = re.compile(
+    rf"\bup or down\b|\bon {_MONTHS} \d{{1,2}}\b|\b{_MONTHS} \d{{1,2}}\s*-\s*(?:{_MONTHS} )?\d{{1,2}}\b", re.I)
+
+@st.cache_data(ttl=300)
+def load_latest_polymarket():
+    """Only the most recent pipeline snapshot. Older rows belong to markets
+    that have since resolved or dropped out of the live feed."""
+    df = load("polymarket_markets", "market_id")
+    if df.empty:
+        return df
+    df["last_updated"] = pd.to_datetime(df["last_updated"])
+    df = df[df["last_updated"] == df["last_updated"].max()]
+    df = df[~df["title"].str.contains(SHORT_DATED_MARKET, na=False)]
+    return df.reset_index(drop=True)
+
+@st.cache_data(ttl=3600)
+def first_real_headline_date():
+    """Risk scores are only real from the first day headlines were actually
+    scored; earlier rows in risk_scores were synthetically generated."""
+    rows = supabase.table("risk_headlines").select("headline_date").order("headline_date").limit(1).execute().data
+    return pd.to_datetime(rows[0]["headline_date"]) if rows else None
 
 @st.cache_data(ttl=1800)
 def load_prices_for_ticker(ticker):
-    data = supabase.table("asset_prices").select("*").eq("ticker", ticker).order("price_date").execute().data
-    df = pd.DataFrame(data)
+    df = pd.DataFrame(fetch_all(
+        lambda: supabase.table("asset_prices").select("*").eq("ticker", ticker).order("id")
+    ))
     if not df.empty:
         df["price_date"] = pd.to_datetime(df["price_date"])
         df = df.sort_values("price_date").reset_index(drop=True)
@@ -48,10 +101,12 @@ def load_prices_for_theme(theme, assets_df):
     tickers = assets_df[assets_df["theme"] == theme]["ticker"].tolist()
     if not tickers:
         return pd.DataFrame()
-    data = supabase.table("asset_prices").select("ticker,price_date,close,daily_return").in_("ticker", tickers).order("price_date").execute().data
-    df = pd.DataFrame(data)
+    df = pd.DataFrame(fetch_all(
+        lambda: supabase.table("asset_prices").select("id,ticker,price_date,close,daily_return").in_("ticker", tickers).order("id")
+    ))
     if not df.empty:
         df["price_date"] = pd.to_datetime(df["price_date"])
+        df = df.drop(columns="id").sort_values("price_date").reset_index(drop=True)
     return df
 
 # ── STATISTICAL FUNCTIONS ─────────────────────────────────────────────────────
@@ -93,9 +148,12 @@ def method_expander(title, what, how, interpret, limitations):
 # ── LOAD BASE DATA ────────────────────────────────────────────────────────────
 
 assets_df      = load("assets")
-risk_scores_df = load("risk_scores")
-risk_headlines_df = load("risk_headlines")
-polymarket_df  = load("polymarket_markets")
+risk_scores_df = load("risk_scores", "id")
+_real_start = first_real_headline_date()
+if not risk_scores_df.empty and _real_start is not None:
+    risk_scores_df = risk_scores_df[pd.to_datetime(risk_scores_df["score_date"]) >= _real_start].reset_index(drop=True)
+risk_headlines_df = load_recent_headlines(30)
+polymarket_df  = load_latest_polymarket()
 funds_df       = load("funds")
 breaks_df      = load("reconciliation_breaks")
 ssi_df         = load("settlement_instructions")
@@ -345,7 +403,10 @@ with tab2:
         st.warning("No risk score data yet. Run the daily price refresh workflow on GitHub Actions.")
     else:
         risk_scores_df["score_date"] = pd.to_datetime(risk_scores_df["score_date"])
-        pivot_risk = risk_scores_df.pivot(index="score_date", columns="category", values="risk_score").sort_index().fillna(0.5)
+        heat_cutoff = risk_scores_df["score_date"].max() - pd.Timedelta(days=30)
+        pivot_risk = (risk_scores_df[risk_scores_df["score_date"] >= heat_cutoff]
+                      .pivot(index="score_date", columns="category", values="risk_score")
+                      .sort_index().fillna(0.5))
 
         st.subheader("Risk Score Heatmap — Last 30 Days")
         st.markdown("Scores range from 0 (no negative sentiment) to 1 (maximum negative/risk sentiment). Calculated as the average FinBERT negative-class probability across headlines for that category and day.")
@@ -379,7 +440,8 @@ with tab2:
         if not risk_headlines_df.empty:
             risk_headlines_df["headline_date"] = pd.to_datetime(risk_headlines_df["headline_date"])
             cat_headlines = (risk_headlines_df[risk_headlines_df["category"] == cat_sel]
-                             .sort_values("headline_date", ascending=False)
+                             .sort_values(["headline_date", "id"], ascending=False)
+                             .drop_duplicates(subset=["headline"])
                              .head(30))
 
             if not cat_headlines.empty:
@@ -429,6 +491,7 @@ with tab3:
     if polymarket_df.empty:
         st.warning("No Polymarket data yet. Trigger the daily price refresh workflow on GitHub Actions.")
     else:
+        st.caption(f"Snapshot as of {polymarket_df['last_updated'].max():%d %b %Y}. Markets that have since resolved or closed are dropped on each refresh.")
         poly_cats = ["All"] + sorted(polymarket_df["category"].unique().tolist())
         cat_filter = st.selectbox("Filter by category", poly_cats)
         display_poly = polymarket_df if cat_filter == "All" else polymarket_df[polymarket_df["category"] == cat_filter]
@@ -470,7 +533,7 @@ Answer concisely as a financial analyst would, referencing specific market proba
 with tab4:
     st.caption("Yield curve, real yields, liquidity and a semiconductor proxy, cross-checked against gold and AI & Tech exposure. Sourced from FRED and Yahoo Finance.")
 
-    macro_df = load("macro_series")
+    macro_df = load("macro_series", "id")
 
     if macro_df.empty:
         st.warning("No macro data yet. Run update_prices.py --backfill-macro once, or trigger the daily refresh workflow.")
