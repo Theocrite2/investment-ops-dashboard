@@ -16,9 +16,21 @@ import google.generativeai as genai
 
 load_dotenv()
 
-SUPABASE_URL = st.secrets.get("SUPABASE_URL", os.environ.get("SUPABASE_URL"))
-SUPABASE_KEY = st.secrets.get("SUPABASE_KEY", os.environ.get("SUPABASE_KEY"))
-GEMINI_KEY   = st.secrets.get("GEMINI_API_KEY", os.environ.get("GEMINI_API_KEY"))
+def get_secret(key):
+    """Environment variables first (Hugging Face Spaces, Docker, and Streamlit
+    Cloud, which also exports root-level secrets as env vars), then st.secrets.
+    Never raises when no secrets.toml exists."""
+    value = os.environ.get(key)
+    if value:
+        return value
+    try:
+        return st.secrets[key]
+    except Exception:
+        return None
+
+SUPABASE_URL = get_secret("SUPABASE_URL")
+SUPABASE_KEY = get_secret("SUPABASE_KEY")
+GEMINI_KEY   = get_secret("GEMINI_API_KEY")
 
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 genai.configure(api_key=GEMINI_KEY)
