@@ -4,7 +4,7 @@ Replaces update_prices.py. Run by GitHub Actions every weekday at 18:00 CET.
 
 Updates:
   1. Asset prices (new thematic assets)
-  2. NLP geopolitical risk scores from NewsAPI + FinBERT
+  2. NLP geopolitical risk scores from GNews headlines + ProsusAI/FinBERT
   3. Polymarket market probabilities
   4. Fund NAV history (existing)
   5. Fund instrument prices (existing)
@@ -88,14 +88,49 @@ RISK_CATEGORIES = {
 
 
 
-def get_finbert_score(text):
+# ── SENTIMENT: ProsusAI/FinBERT ─────────────────────────────────────────────
+# Risk score = FinBERT's probability of the "negative" class (0 = none, 1 = max).
+
+FINBERT_MODEL = "ProsusAI/finbert"
+SCORING_MODEL = "finbert"
+_finbert = None
+
+def _ensure_finbert_deps():
+    """Install CPU torch + transformers on first use (GitHub runners start clean)."""
     try:
-        from textblob import TextBlob
-        score = TextBlob(text).sentiment.polarity
-        return round((1 - score) / 2, 4)
-    except Exception:
-        return 0.5
-    
+        import torch, transformers  # noqa: F401
+        return
+    except ImportError:
+        pass
+    import subprocess
+    print("  Installing torch (CPU) and transformers...")
+    pip = [sys.executable, "-m", "pip", "install", "-q", "--no-cache-dir"]
+    try:
+        subprocess.check_call(pip + ["torch", "--index-url", "https://download.pytorch.org/whl/cpu"])
+    except subprocess.CalledProcessError:
+        subprocess.check_call(pip + ["torch"])
+    subprocess.check_call(pip + ["transformers"])
+    import importlib
+    importlib.invalidate_caches()
+
+def get_finbert_scores(texts):
+    """FinBERT negative-class probability for each text, in order."""
+    global _finbert
+    texts = [t if t and t.strip() else "." for t in texts]
+    if not texts:
+        return []
+    if _finbert is None:
+        _ensure_finbert_deps()
+        from transformers import pipeline
+        print(f"  Loading {FINBERT_MODEL}...")
+        _finbert = pipeline("text-classification", model=FINBERT_MODEL)
+    out = _finbert(texts, batch_size=16, top_k=None, truncation=True, max_length=128)
+    scores = []
+    for item in out:
+        neg = next(d["score"] for d in item if d["label"].lower() == "negative")
+        scores.append(round(float(neg), 4))
+    return scores
+
 def fetch_headlines(keywords, max_results=10):
     print(f"  Fetching headlines, GNEWS_KEY present: {bool(GNEWS_KEY)}")
     if not GNEWS_KEY:
@@ -118,27 +153,33 @@ def fetch_headlines(keywords, max_results=10):
 
 
 def update_risk_scores():
-    print("Updating NLP risk scores...")
+    """Returns False if FinBERT could not run (nothing is written in that case,
+    so scores from different models are never mixed)."""
+    print("Updating NLP risk scores (FinBERT)...")
     for category, keywords in RISK_CATEGORIES.items():
         articles = fetch_headlines(keywords)
         if not articles:
             print(f"  No headlines for {category}")
             continue
 
-        scores = []
-        for article in articles:
-            text = f"{article.get('title','')} {article.get('description','')}"
-            score = get_finbert_score(text)
-            scores.append(score)
+        texts = [f"{a.get('title','')} {a.get('description','')}".strip() for a in articles]
+        try:
+            scores = get_finbert_scores(texts)
+        except Exception as e:
+            print(f"  FinBERT unavailable, risk scores NOT updated: {e}")
+            return False
+
+        for article, score in zip(articles, scores):
             supabase.table("risk_headlines").insert({
                 "headline_date":   str(TODAY),
                 "category":        category,
                 "headline":        article.get("title", "")[:500],
                 "sentiment_score": score,
                 "source":          article.get("source", {}).get("name", ""),
+                "scoring_model":   SCORING_MODEL,
             }).execute()
 
-        avg_score = round(sum(scores) / len(scores), 4) if scores else 0.5
+        avg_score = round(sum(scores) / len(scores), 4)
         supabase.table("risk_scores").upsert({
             "score_date":     str(TODAY),
             "category":       category,
@@ -146,6 +187,50 @@ def update_risk_scores():
             "headline_count": len(scores),
         }, on_conflict="score_date,category").execute()
         print(f"  {category}: {avg_score:.3f} ({len(scores)} headlines)")
+    return True
+
+
+def rescore_legacy_headlines(batch=200):
+    """One-off, idempotent: headlines stored before FinBERT (scoring_model is null)
+    are re-scored from their title, then risk_scores is rebuilt for the affected
+    days as the mean over distinct headlines. A no-op once everything is scored."""
+    rows, start = [], 0
+    while True:
+        chunk = (supabase.table("risk_headlines").select("*").is_("scoring_model", "null")
+                 .order("id").range(start, start + 999).execute().data)
+        rows.extend(chunk)
+        if len(chunk) < 1000:
+            break
+        start += 1000
+    if not rows:
+        print("No legacy headlines to re-score.")
+        return True
+    print(f"Re-scoring {len(rows)} legacy headlines with FinBERT...")
+    try:
+        titles = sorted({r["headline"] for r in rows})
+        score_of = {}
+        for i in range(0, len(titles), batch):
+            part = titles[i:i + batch]
+            score_of.update(zip(part, get_finbert_scores(part)))
+            print(f"  scored {min(i + batch, len(titles))}/{len(titles)}")
+    except Exception as e:
+        print(f"  FinBERT unavailable, legacy headlines NOT re-scored: {e}")
+        return False
+
+    for i in range(0, len(rows), 500):
+        out = [{**r, "sentiment_score": score_of[r["headline"]], "scoring_model": SCORING_MODEL}
+               for r in rows[i:i + 500]]
+        supabase.table("risk_headlines").upsert(out, on_conflict="id").execute()
+
+    daily = {}
+    for r in rows:
+        daily.setdefault((r["headline_date"], r["category"]), {})[r["headline"]] = score_of[r["headline"]]
+    agg = [{"score_date": d, "category": c, "risk_score": round(sum(v.values()) / len(v), 4),
+            "headline_count": len(v)} for (d, c), v in daily.items()]
+    for i in range(0, len(agg), 500):
+        supabase.table("risk_scores").upsert(agg[i:i + 500], on_conflict="score_date,category").execute()
+    print(f"  Rebuilt {len(agg)} daily category scores.")
+    return True
 
 
 # ── POLYMARKET ───────────────────────────────────────────────────────────────
@@ -341,11 +426,8 @@ def backfill_risk_scores(days=30):
             articles = fetch_headlines(keywords)
             if not articles:
                 continue
-            scores = []
-            for article in articles:
-                text = f"{article.get('title','')} {article.get('description','')}"
-                score = get_finbert_score(text)
-                scores.append(score)
+            scores = get_finbert_scores(
+                [f"{a.get('title','')} {a.get('description','')}".strip() for a in articles])
             avg_score = round(sum(scores) / len(scores), 4) if scores else 0.5
             supabase.table("risk_scores").upsert({
                 "score_date":     str(d),
@@ -522,9 +604,12 @@ if __name__ == "__main__":
         update_macro_series(backfill=True)
     else:
         update_asset_prices()
-        update_risk_scores()
+        risk_ok = update_risk_scores() and rescore_legacy_headlines()
         update_polymarket()
         append_nav_today()
         update_fund_instrument_prices()
         update_macro_series(backfill=False)
+        if not risk_ok:
+            print("Done, but FinBERT scoring failed. See above.")
+            sys.exit(1)
     print("Done.")
