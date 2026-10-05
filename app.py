@@ -11,7 +11,7 @@ import plotly.graph_objects as go
 import requests
 import streamlit as st
 from dotenv import load_dotenv
-from supabase import create_client, ClientOptions
+from supabase import create_client
 import google.generativeai as genai
 
 load_dotenv()
@@ -20,7 +20,7 @@ SUPABASE_URL = st.secrets.get("SUPABASE_URL", os.environ.get("SUPABASE_URL"))
 SUPABASE_KEY = st.secrets.get("SUPABASE_KEY", os.environ.get("SUPABASE_KEY"))
 GEMINI_KEY   = st.secrets.get("GEMINI_API_KEY", os.environ.get("GEMINI_API_KEY"))
 
-supabase = create_client(SUPABASE_URL, SUPABASE_KEY, options=ClientOptions(postgrest_client_timeout=15))
+supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 genai.configure(api_key=GEMINI_KEY)
 ai_model = genai.GenerativeModel("gemini-3.6-flash")
 
@@ -40,22 +40,21 @@ def fetch_all(build_query):
     """Page through a query until every row is retrieved. build_query must
     return a fresh, deterministically ordered query on each call."""
     rows, start = [], 0
-    for _ in range(100):  # hard stop, never loop forever
+    while True:
         batch = build_query().range(start, start + PAGE_SIZE - 1).execute().data
         rows.extend(batch)
         if len(batch) < PAGE_SIZE:
             return rows
         start += PAGE_SIZE
-    return rows
 
-@st.cache_data(ttl=21600)
+@st.cache_data(ttl=300)
 def load(table, order_col=None):
     def query():
         q = supabase.table(table).select("*")
         return q.order(order_col) if order_col else q
     return pd.DataFrame(fetch_all(query))
 
-@st.cache_data(ttl=21600)
+@st.cache_data(ttl=300)
 def load_recent_headlines(days=30):
     since = str(date.today() - timedelta(days=days))
     return pd.DataFrame(fetch_all(
@@ -68,7 +67,7 @@ _MONTHS = r"(?:january|february|march|april|may|june|july|august|september|octob
 SHORT_DATED_MARKET = re.compile(
     rf"\bup or down\b|\bon {_MONTHS} \d{{1,2}}\b|\b{_MONTHS} \d{{1,2}}\s*-\s*(?:{_MONTHS} )?\d{{1,2}}\b", re.I)
 
-@st.cache_data(ttl=21600)
+@st.cache_data(ttl=300)
 def load_latest_polymarket():
     """Only the most recent pipeline snapshot. Older rows belong to markets
     that have since resolved or dropped out of the live feed."""
@@ -87,7 +86,7 @@ def first_real_headline_date():
     rows = supabase.table("risk_headlines").select("headline_date").order("headline_date").limit(1).execute().data
     return pd.to_datetime(rows[0]["headline_date"]) if rows else None
 
-@st.cache_data(ttl=21600)
+@st.cache_data(ttl=1800)
 def load_prices_for_ticker(ticker):
     df = pd.DataFrame(fetch_all(
         lambda: supabase.table("asset_prices").select("*").eq("ticker", ticker).order("id")
@@ -97,7 +96,7 @@ def load_prices_for_ticker(ticker):
         df = df.sort_values("price_date").reset_index(drop=True)
     return df
 
-@st.cache_data(ttl=21600)
+@st.cache_data(ttl=60)
 def load_prices_for_theme(theme, assets_df):
     tickers = assets_df[assets_df["theme"] == theme]["ticker"].tolist()
     if not tickers:
