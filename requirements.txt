@@ -1,12 +1,8 @@
 streamlit
 pandas
 numpy
-supabase
-yfinance
-python-dotenv
 plotly
-google-generativeai
-statsmodels
-scipy
 requests
-newsapi-python
+python-dotenv
+supabase
+google-generativeai
